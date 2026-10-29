@@ -1,0 +1,1100 @@
+import { useState, useEffect, useRef } from 'react';
+import usePageTitle from '../hooks/usePageTitle';
+import { Users, Plus, Edit, Trash2, Key, X, Search, UserCheck, UserX, Mail, Phone, Shield, MapPin, Calendar, Briefcase } from 'lucide-react';
+import { staffAPI } from '../services/api';
+import toast from 'react-hot-toast';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import Pagination from '../components/Pagination';
+import Modal from '../components/Modal';
+import ConfirmModal from '../components/ConfirmModal';
+import PageLoadingSpinner from '../components/PageLoadingSpinner';
+
+const Staff = () => {
+  usePageTitle('Staff');
+ const queryClient = useQueryClient();
+ const [searchQuery, setSearchQuery] = useState('');
+ 
+ // Pagination state
+ const [currentPage, setCurrentPage] = useState(1);
+ const [itemsPerPage] = useState(10);
+ 
+ // Modal states
+ const [showStepOneModal, setShowStepOneModal] = useState(false); // Step 1: Staff Info
+ const [showStepTwoModal, setShowStepTwoModal] = useState(false); // Step 2: Account Creation
+ const [showEditModal, setShowEditModal] = useState(false);
+ const [showDeleteModal, setShowDeleteModal] = useState(false);
+ const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
+ const [selectedStaff, setSelectedStaff] = useState(null);
+ const [tempStaffInfo, setTempStaffInfo] = useState(null); // Store staff info between steps
+ 
+ // Form state for Step 1 (Staff Info)
+ const [staffInfoForm, setStaffInfoForm] = useState({
+ full_name: '',
+ email: '',
+ phone: '',
+ address: '',
+ date_of_birth: '',
+ gender: '',
+ });
+
+ // Form state for Step 2 (Account Creation)
+ const [accountForm, setAccountForm] = useState({
+ password: '',
+ confirm_password: '',
+ });
+
+ // Edit form state
+ const [editForm, setEditForm] = useState({
+ full_name: '',
+ email: '',
+ phone: '',
+ address: '',
+ date_of_birth: '',
+ gender: '',
+ position: '',
+ status: 'active',
+ });
+ 
+ const [resetPassword, setResetPassword] = useState('');
+ 
+ // Validation states
+ const [emailError, setEmailError] = useState('');
+ const [emailChecking, setEmailChecking] = useState(false);
+ const [phoneError, setPhoneError] = useState('');
+ 
+ // Debounce timer
+ const emailDebounceTimer = useRef(null);
+
+ // React Query - Fetch staff with real-time updates (uses global 5-second refetch)
+ const { data: staffData, isLoading: loading, isError } = useQuery({
+ queryKey: ['staff'],
+ queryFn: async () => {
+ const response = await staffAPI.getAll();
+ return response.data?.staff || response.data || response.staff || [];
+ },
+ // Uses global config: refetchInterval: 5000
+ });
+ 
+ // Ensure staff is always an array
+ const staff = Array.isArray(staffData) ? staffData : [];
+
+ // Cleanup debounce timer on unmount
+ useEffect(() => {
+ return () => {
+ if (emailDebounceTimer.current) {
+ clearTimeout(emailDebounceTimer.current);
+ }
+ };
+ }, []);
+
+ // Email validation with debounce
+ const validateEmail = (email, userId = null) => {
+ // Clear previous timer
+ if (emailDebounceTimer.current) {
+ clearTimeout(emailDebounceTimer.current);
+ }
+
+ // Don't validate empty email
+ if (!email || email.trim() === '') {
+ setEmailError('');
+ setEmailChecking(false);
+ return;
+ }
+
+ const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+ if (!emailRegex.test(email)) {
+ setEmailError('Invalid email format');
+ setEmailChecking(false);
+ return;
+ }
+
+ // Set checking state immediately
+ setEmailChecking(true);
+ setEmailError('');
+
+ // Debounce the API call
+ emailDebounceTimer.current = setTimeout(async () => {
+ try {
+ const response = await staffAPI.checkEmail(email, userId);
+ console.log('Email check full response:', response);
+ console.log('Email:', email, 'StaffInfoId:', userId);
+ 
+ // Axios wraps the response in a 'data' property
+ const result = response.data;
+ console.log('Availagle:', result.available);
+ 
+ if (result.available === false) {
+ setEmailError('Email already taken');
+ } else {
+ setEmailError('');
+ }
+ } catch (error) {
+ console.error('Error checking email:', error);
+ // On error, don't block the form
+ setEmailError('');
+ } finally {
+ setEmailChecking(false);
+ }
+ }, 500); // Wait 500ms after user stops typing
+ };
+
+ // Phone validation
+ const validatePhone = (phone) => {
+ if (!phone) {
+ setPhoneError('');
+ return true;
+ }
+
+ const phoneRegex = /^(09|\+639)\d{9}$|^09\d{2}-\d{3}-\d{4}$/;
+ if (!phoneRegex.test(phone)) {
+ setPhoneError('Invalid phone format (e.g., 0912-345-6789)');
+ return false;
+ }
+
+ setPhoneError('');
+ return true;
+ };
+
+ // Reset forms
+ const resetStaffInfoForm = () => {
+ setStaffInfoForm({
+ full_name: '',
+ email: '',
+ phone: '',
+ address: '',
+ date_of_birth: '',
+ gender: '',
+ });
+ setEmailError('');
+ setPhoneError('');
+ };
+
+ const resetAccountForm = () => {
+ setAccountForm({
+ password: '',
+ confirm_password: '',
+ });
+ };
+
+ // Step 1: Handle staff info sugmission
+ const handleStaffInfoSubmit = async (e) => {
+ e.preventDefault();
+ 
+ // Wait for email checking to complete
+ if (emailChecking) {
+ toast.error('Please wait for email validation to complete');
+ return;
+ }
+ 
+ if (emailError) {
+ toast.error('Please use a different email address');
+ return;
+ }
+ 
+ if (staffInfoForm.phone && !validatePhone(staffInfoForm.phone)) {
+ toast.error('Please fix phone number format');
+ return;
+ }
+
+ try {
+ // Save staff information with position='Staff (read only)'
+ const staffData = {
+ ...staffInfoForm,
+ position: 'Staff'
+ };
+ const response = await staffAPI.saveStaffInfo(staffData);
+ toast.success('Staff information saved successfully!');
+ setTempStaffInfo(response.data.staff_info);
+ setShowStepOneModal(false);
+ setShowStepTwoModal(true);
+ } catch (error) {
+ console.error('Error saving staff info:', error);
+ toast.error(error.response?.data?.message || 'Failed to save staff information');
+ }
+ };
+
+ // Step 2: Handle account creation
+ const handleAccountCreation = async (e) => {
+ e.preventDefault();
+
+ if (accountForm.password !== accountForm.confirm_password) {
+ toast.error('Passwords do not match');
+ return;
+ }
+
+ if (accountForm.password.length < 8) {
+ toast.error('Password mustbeat least 8 characters');
+ return;
+ }
+
+ // Close modal immediately
+ const staffId = tempStaffInfo.id;
+ const password = accountForm.password;
+ setShowStepTwoModal(false);
+ setTempStaffInfo(null);
+ resetStaffInfoForm();
+ resetAccountForm();
+ 
+ try {
+ await staffAPI.createStaffAccount(staffId, { password });
+ toast.success('Staff account created successfully!');
+ queryClient.invalidateQueries({ queryKey: ['staff'] });
+ } catch (error) {
+ console.error('Error creating account:', error);
+ toast.error(error.response?.data?.message || 'Failed to create account');
+ }
+ };
+
+ // Handle edit staff
+ const handleEditStaff = async (e) => {
+ e.preventDefault();
+ 
+ // Wait for email checking to complete
+ if (emailChecking) {
+ toast.error('Please wait for email validation to complete');
+ return;
+ }
+ 
+ if (emailError) {
+ toast.error('Please use a different email address');
+ return;
+ }
+ 
+ if (editForm.phone && !validatePhone(editForm.phone)) {
+ toast.error('Please fix phone number format');
+ return;
+ }
+
+ // Close modal immediately
+ const staffId = selectedStaff.id;
+ const formData = { ...editForm };
+ setShowEditModal(false);
+ setSelectedStaff(null);
+ 
+ try {
+ await staffAPI.updateStaffInfo(staffId, formData);
+ toast.success('Staff information updated successfully');
+ queryClient.invalidateQueries({ queryKey: ['staff'] });
+ } catch (error) {
+ console.error('Error updating staff:', error);
+ toast.error(error.response?.data?.message || 'Failed to update staff information');
+ }
+ };
+
+ // Handle delete staff
+ const handleDeleteStaff = async () => {
+ // Close modal immediately
+ const staffId = selectedStaff.id;
+ setShowDeleteModal(false);
+ setSelectedStaff(null);
+ 
+ try {
+ await staffAPI.deleteStaff(staffId);
+ toast.success('Staff member deleted successfully');
+ queryClient.invalidateQueries({ queryKey: ['staff'] });
+ } catch (error) {
+ console.error('Error deleting staff:', error);
+ toast.error(error.response?.data?.message || 'Failed to delete staff member');
+ }
+ };
+
+ // Handle reset password
+ const handleResetPassword = async (e) => {
+ e.preventDefault();
+ 
+ if (resetPassword.length < 8) {
+ toast.error('Password mustbeat least 8 characters');
+ return;
+ }
+
+ // Close modal immediately
+ const userId = selectedStaff.user_id;
+ const password = resetPassword;
+ setShowResetPasswordModal(false);
+ setSelectedStaff(null);
+ setResetPassword('');
+ 
+ try {
+ await staffAPI.resetPassword(userId, password);
+ toast.success('Password reset successfully');
+ } catch (error) {
+ console.error('Error resetting password:', error);
+ toast.error(error.response?.data?.message || 'Failed to reset password');
+ }
+ };
+
+ // Open edit modal
+ const openEditModal = (staffMember) => {
+ setSelectedStaff(staffMember);
+ setEditForm({
+ full_name: staffMember.full_name,
+ email: staffMember.email,
+ phone: staffMember.phone || '',
+ address: staffMember.address || '',
+ date_of_birth: staffMember.date_of_birth || '',
+ gender: staffMember.gender || '',
+ position: staffMember.position || '',
+ status: staffMember.status,
+ });
+ setEmailError('');
+ setPhoneError('');
+ setShowEditModal(true);
+ };
+
+ // Open delete modal
+ const openDeleteModal = (staffMember) => {
+ setSelectedStaff(staffMember);
+ setShowDeleteModal(true);
+ };
+
+ // Open reset password modal
+ const openResetPasswordModal = (staffMember) => {
+ setSelectedStaff(staffMember);
+ setResetPassword('');
+ setShowResetPasswordModal(true);
+ };
+
+ // Filter and paginate staff
+ const filteredStaff = staff.filter(member =>
+ member.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+ member.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+ member.phone?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+ member.position?.toLowerCase().includes(searchQuery.toLowerCase())
+ );
+
+ const indexOfLastItem = currentPage * itemsPerPage;
+ const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+ const currentStaff = filteredStaff.slice(indexOfFirstItem, indexOfLastItem);
+ const totalPages = Math.ceil(filteredStaff.length / itemsPerPage);
+
+ // Debug logs
+ console.log('Staff state:', staff);
+ console.log('Staff length:', staff.length);
+ console.log('Filtered staff:', filteredStaff);
+ console.log('Current staff:', currentStaff);
+
+ return (
+ <div className="p-5 lg:p-6 min-h-full">
+ {/* Header */}
+ <div className="mb-7">
+ <div className="flex items-end justify-between">
+ <div>
+ <h1 className="text-xl font-bold text-gray-900 tracking-tight">Staff Management</h1>
+ <p className="text-[11px] text-gray-400 mt-1">Manage your staff members</p>
+ </div>
+ <button
+ onClick={() => {
+ resetStaffInfoForm();
+ resetAccountForm();
+ setShowStepOneModal(true);
+ }}
+ className="px-4 py-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 active:scale-[0.97] transition-all text-[11px] font-semibold flex items-center gap-2"
+ >
+ <Plus className="w-4 h-4" />
+ Add Staff
+ </button>
+ </div>
+ </div>
+
+ {/* Stats */}
+ <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-7">
+ <div className="group relative bg-white rounded-2xl p-5 border border-gray-100 shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_25px_rgba(0,0,0,0.06)] hover:-translate-y-0.5 transition-all duration-300 overflow-hidden">
+ <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-gray-50 to-transparent rounded-bl-full opacity-60" />
+ <div className="relative">
+ <div className="bg-emerald-50 p-2.5 rounded-xl ring-4 ring-white w-fit">
+ <Users className="w-[18px] h-[18px] text-emerald-600" />
+ </div>
+ <div className="mt-4">
+ <p className="text-[22px] font-bold text-gray-900 tracking-tight leading-none">{staff.length}</p>
+ <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mt-1.5">Total Staff</p>
+ </div>
+ </div>
+ </div>
+ <div className="group relative bg-white rounded-2xl p-5 border border-gray-100 shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_25px_rgba(0,0,0,0.06)] hover:-translate-y-0.5 transition-all duration-300 overflow-hidden">
+ <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-gray-50 to-transparent rounded-bl-full opacity-60" />
+ <div className="relative">
+ <div className="bg-emerald-50 p-2.5 rounded-xl ring-4 ring-white w-fit">
+ <UserCheck className="w-[18px] h-[18px] text-emerald-600" />
+ </div>
+ <div className="mt-4">
+ <p className="text-[22px] font-bold text-gray-900 tracking-tight leading-none">{staff.filter(s => s.status === 'active').length}</p>
+ <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mt-1.5">Active Staff</p>
+ </div>
+ </div>
+ </div>
+ <div className="group relative bg-white rounded-2xl p-5 border border-gray-100 shadow-[0_1px_3px_rgba(0,0,0,0.04)] hover:shadow-[0_8px_25px_rgba(0,0,0,0.06)] hover:-translate-y-0.5 transition-all duration-300 overflow-hidden">
+ <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-gray-50 to-transparent rounded-bl-full opacity-60" />
+ <div className="relative">
+ <div className="bg-amber-50 p-2.5 rounded-xl ring-4 ring-white w-fit">
+ <UserX className="w-[18px] h-[18px] text-amber-600" />
+ </div>
+ <div className="mt-4">
+ <p className="text-[22px] font-bold text-gray-900 tracking-tight leading-none">{staff.filter(s => s.status === 'inactive').length}</p>
+ <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mt-1.5">Inactive Staff</p>
+ </div>
+ </div>
+ </div>
+ </div>
+
+ {/* Search Bar */}
+ <div className="bg-white rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-gray-100 p-5 mb-5">
+ <div className="relative">
+ <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+ <input
+ type="text"
+ placeholder="Search staff..."
+ value={searchQuery}
+ onChange={(e) => {
+ setSearchQuery(e.target.value);
+ setCurrentPage(1);
+ }}
+ className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl text-[13px] focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+ />
+ </div>
+ </div>
+
+ {/* Staff Table/Cards */}
+ <div className="bg-white rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)] border border-gray-100 overflow-hidden">
+ {loading && staff.length === 0 ? (
+ <PageLoadingSpinner message="Loading staff..." />
+ ) : filteredStaff.length === 0 ? (
+ <div className="text-center py-20">
+ <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+ <p className="text-gray-500 font-medium">
+ {searchQuery ? 'No staff members found matching your search' : 'No staff members yet'}
+ </p>
+ </div>
+ ) : (
+ <>
+ {/* Mobile Card View */}
+ <div className="block md:hidden p-4 space-y-4">
+ {currentStaff.map((member) => (
+ <div key={member.id} className="bg-gray-50 rounded-xl p-4 space-y-3 border border-gray-200">
+ {/* Header */}
+ <div className="flex items-start justify-between">
+ <div className="flex items-center gap-3">
+ <div className="w-12 h-12 rounded-full bg-emerald-600 flex items-center justify-center text-white font-semibold">
+ {member.full_name?.charAt(0).toUpperCase()}
+ </div>
+ <div>
+ <p className="font-semibold text-gray-900">{member.full_name}</p>
+ {member.user_id ? (
+ <span className="text-xs text-emerald-600 flex items-center gap-1">
+ <UserCheck className="w-3 h-3" /> Active
+ </span>
+ ) : (
+ <span className="text-xs text-amber-600 flex items-center gap-1">
+ <UserX className="w-3 h-3" /> Pending
+ </span>
+ )}
+ </div>
+ </div>
+ </div>
+
+ {/* Contact Info */}
+ <div className="space-y-2 pt-2 border-t border-gray-200">
+ <div className="flex items-center gap-2 text-[11px] text-gray-500">
+ <Mail className="w-4 h-4 flex-shrink-0" />
+ <span className="truncate">{member.email}</span>
+ </div>
+ {member.phone && (
+ <div className="flex items-center gap-2 text-[11px] text-gray-500">
+ <Phone className="w-4 h-4 flex-shrink-0" />
+ <span>{member.phone}</span>
+ </div>
+ )}
+ {member.position && (
+ <div className="flex items-center gap-2 text-[11px] text-gray-500">
+ <Briefcase className="w-4 h-4 flex-shrink-0 text-emerald-500" />
+ <span className="font-medium">{member.position}</span>
+ </div>
+ )}
+ </div>
+
+ {/* Status & Role */}
+ <div className="flex items-center gap-2 flex-wrap">
+ <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${
+ member.status === 'active'
+ ? 'bg-emerald-100 text-emerald-700'
+ : member.status === 'pending'
+ ? 'bg-amber-100 text-amber-700'
+ : 'bg-gray-100 text-gray-700'
+ }`}>
+ {member.status}
+ </span>
+ <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-medium">
+ <Shield className="w-3 h-3 inline mr-1" />
+ Staff
+ </span>
+ </div>
+
+ {/* Actions */}
+ <div className="flex items-center gap-2 pt-2 border-t border-gray-200">
+ <button
+ onClick={() => openEditModal(member)}
+ className="flex-1 px-3 py-2 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors text-[11px] font-semibold flex items-center justify-center gap-1"
+ >
+ <Edit className="w-4 h-4" />
+ Edit
+ </button>
+ {member.user_id && (
+ <button
+ onClick={() => openResetPasswordModal(member)}
+ className="flex-1 px-3 py-2 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition-colors text-[11px] font-semibold flex items-center justify-center gap-1"
+ >
+ <Key className="w-4 h-4" />
+ Reset
+ </button>
+ )}
+ <button
+ onClick={() => openDeleteModal(member)}
+ className="px-3 py-2 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors"
+ >
+ <Trash2 className="w-4 h-4" />
+ </button>
+ </div>
+ </div>
+ ))}
+ </div>
+
+ {/* Desktop Table View */}
+ <div className="hidden md:block overflow-x-auto">
+ <table className="w-full">
+ <thead className="bg-gray-50">
+ <tr>
+ <th className="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider">Staff Member</th>
+ <th className="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider">Contact</th>
+ <th className="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider">Position</th>
+ <th className="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider">Status</th>
+ <th className="px-5 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider">Actions</th>
+ </tr>
+ </thead>
+ <tbody className="divide-y divide-gray-200">
+ {currentStaff.map((member) => (
+ <tr key={member.id} className="hover:bg-gray-50 transition-colors">
+ <td className="px-5 py-3.5">
+ <div className="flex items-center gap-3">
+ <div className="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center text-white font-semibold">
+ {member.full_name?.charAt(0).toUpperCase()}
+ </div>
+ <div>
+ <p className="font-semibold text-gray-900">{member.full_name}</p>
+ {member.user_id ? (
+ <span className="text-xs text-emerald-600 flex items-center gap-1">
+ <UserCheck className="w-3 h-3" /> Account Active
+ </span>
+ ) : (
+ <span className="text-xs text-amber-600 flex items-center gap-1">
+ <UserX className="w-3 h-3" /> Pending Account
+ </span>
+ )}
+ </div>
+ </div>
+ </td>
+ <td className="px-5 py-3.5">
+ <div className="space-y-1">
+ <div className="flex items-center gap-2 text-[11px] text-gray-500">
+ <Mail className="w-4 h-4" />
+ {member.email}
+ </div>
+ {member.phone && (
+ <div className="flex items-center gap-2 text-[11px] text-gray-500">
+ <Phone className="w-4 h-4" />
+ {member.phone}
+ </div>
+ )}
+ </div>
+ </td>
+ <td className="px-5 py-3.5">
+ {member.position ? (
+ <div className="flex items-center gap-2 text-[11px] text-gray-700">
+ <Briefcase className="w-4 h-4 text-emerald-500" />
+ <span className="font-medium">{member.position}</span>
+ </div>
+ ) : (
+ <span className="text-[11px] text-gray-400">-</span>
+ )}
+ </td>
+ <td className="px-5 py-3.5">
+ <div className="flex items-center gap-2">
+ <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${
+ member.status === 'active'
+ ? 'bg-emerald-100 text-emerald-700'
+ : member.status === 'pending'
+ ? 'bg-amber-100 text-amber-700'
+ : 'bg-gray-100 text-gray-700'
+ }`}>
+ {member.status}
+ </span>
+ <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs font-medium">
+ <Shield className="w-3 h-3 inline mr-1" />
+ Staff
+ </span>
+ </div>
+ </td>
+ <td className="px-5 py-3.5">
+ <div className="flex items-center gap-2">
+ <button
+ onClick={() => openEditModal(member)}
+ className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+ title="Edit"
+ >
+ <Edit className="w-4 h-4" />
+ </button>
+ {member.user_id && (
+ <button
+ onClick={() => openResetPasswordModal(member)}
+ className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+ title="Reset Password"
+ >
+ <Key className="w-4 h-4" />
+ </button>
+ )}
+ <button
+ onClick={() => openDeleteModal(member)}
+ className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+ title="Delete"
+ >
+ <Trash2 className="w-4 h-4" />
+ </button>
+ </div>
+ </td>
+ </tr>
+ ))}
+ </tbody>
+ </table>
+ </div>
+
+ {/* Pagination */}
+ {totalPages > 1 && (
+ <div className="border-t border-gray-200 px-6 py-4">
+ <Pagination
+ currentPage={currentPage}
+ totalPages={totalPages}
+ onPageChange={setCurrentPage}
+ />
+ </div>
+ )}
+ </>
+ )}
+ </div>
+
+ {/* Step 1: Staff Information Modal */}
+ <Modal
+ isOpen={showStepOneModal}
+ onClose={() => {
+ setShowStepOneModal(false);
+ resetStaffInfoForm();
+ }}
+ title="Add Staff Member"
+ subtitle="Step 1 of 2: Staff Information"
+ size="md"
+ icon={<Users className="w-6 h-6" />}
+ >
+ <form onSubmit={handleStaffInfoSubmit} className="space-y-4">
+ <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+ <div className="md:col-span-2">
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Full Name *</label>
+ <input
+ type="text"
+ value={staffInfoForm.full_name}
+ onChange={(e) => setStaffInfoForm({ ...staffInfoForm, full_name: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ required
+ />
+ </div>
+ <div className="md:col-span-2">
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">
+ Email * {emailChecking && <span className="text-xs text-gray-500">(checking...)</span>}
+ </label>
+ <input
+ type="email"
+ value={staffInfoForm.email}
+ onChange={(e) => {
+ setStaffInfoForm({ ...staffInfoForm, email: e.target.value });
+ validateEmail(e.target.value);
+ }}
+ className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent ${
+ emailError ? 'border-rose-500' : 'border-gray-300'
+ }`}
+ required
+ />
+ {emailError && (
+ <p className="text-xs text-rose-600 mt-1">{emailError}</p>
+ )}
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Phone</label>
+ <input
+ type="tel"
+ value={staffInfoForm.phone}
+ onChange={(e) => {
+ setStaffInfoForm({ ...staffInfoForm, phone: e.target.value });
+ validatePhone(e.target.value);
+ }}
+ placeholder="0912-345-6789"
+ className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent ${
+ phoneError ? 'border-rose-500' : 'border-gray-300'
+ }`}
+ />
+ {phoneError && (
+ <p className="text-xs text-rose-600 mt-1">{phoneError}</p>
+ )}
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Date of Birth</label>
+ <input
+ type="date"
+ value={staffInfoForm.date_of_birth}
+ onChange={(e) => setStaffInfoForm({ ...staffInfoForm, date_of_birth: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ />
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Gender</label>
+ <select
+ value={staffInfoForm.gender}
+ onChange={(e) => setStaffInfoForm({ ...staffInfoForm, gender: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ >
+ <option value="">Select Gender</option>
+ <option value="male">Male</option>
+ <option value="female">Female</option>
+ <option value="other">Other</option>
+ </select>
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Position</label>
+ <input
+ type="text"
+ value="Staff"
+ disabled
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed"
+ />
+ </div>
+ <div className="md:col-span-2">
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Address</label>
+ <textarea
+ value={staffInfoForm.address}
+ onChange={(e) => setStaffInfoForm({ ...staffInfoForm, address: e.target.value })}
+ rows="2"
+ placeholder="Complete address"
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none"
+ />
+ </div>
+ </div>
+ <div className="flex justify-end gap-3 pt-4">
+ <button
+ type="button"
+ onClick={() => {
+ setShowStepOneModal(false);
+ resetStaffInfoForm();
+ }}
+ className="px-4 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-semibold text-[13px]"
+ >
+ Cancel
+ </button>
+ <button
+ type="submit"
+ disabled={emailChecking || !!emailError}
+ className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all duration-200 flex items-center gap-2 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-[13px]"
+ >
+ Next: Create Account
+ </button>
+ </div>
+ </form>
+ </Modal>
+
+ {/* Step 2: Create Account Modal */}
+ <Modal
+ isOpen={showStepTwoModal && tempStaffInfo}
+ onClose={() => {
+ setShowStepTwoModal(false);
+ setTempStaffInfo(null);
+ resetAccountForm();
+ }}
+ title="Create Account"
+ subtitle="Step 2 of 2: Account Setup"
+ size="sm"
+ icon={<Key className="w-6 h-6" />}
+ >
+ {tempStaffInfo && (
+ <div>
+ <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-6">
+ <p className="text-[11px] text-gray-700 mb-2">
+ Creating account for: <span className="font-semibold text-emerald-700">{tempStaffInfo.full_name}</span>
+ </p>
+ <p className="text-xs text-gray-600 mb-1">
+ <Mail className="w-3 h-3 inline mr-1" />
+ {tempStaffInfo.email}
+ </p>
+ <p className="text-xs text-gray-600">
+ <Shield className="w-3 h-3 inline mr-1" />
+ Role: Staff 
+ </p>
+ </div>
+
+ <form onSubmit={handleAccountCreation} className="space-y-4">
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Password *</label>
+ <input
+ type="password"
+ value={accountForm.password}
+ onChange={(e) => setAccountForm({ ...accountForm, password: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ minLength={8}
+ required
+ />
+ <p className="text-xs text-gray-500 mt-1">Minimum 8 characters</p>
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Confirm Password *</label>
+ <input
+ type="password"
+ value={accountForm.confirm_password}
+ onChange={(e) => setAccountForm({ ...accountForm, confirm_password: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ minLength={8}
+ required
+ />
+ {accountForm.confirm_password && accountForm.password !== accountForm.confirm_password && (
+ <p className="text-xs text-rose-600 mt-1">Passwords do not match</p>
+ )}
+ </div>
+ <div className="flex gap-3 pt-4">
+ <button
+ type="button"
+ onClick={() => {
+ setShowStepTwoModal(false);
+ setShowStepOneModal(true);
+ }}
+ className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+ >
+ Back
+ </button>
+ <button
+ type="submit"
+ disabled={accountForm.password !== accountForm.confirm_password}
+ className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all duration-200 shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+ >
+ Create Account
+ </button>
+ </div>
+ </form>
+ </div>
+ )}
+ </Modal>
+
+ {/* Edit Staff Modal */}
+ <Modal
+ isOpen={showEditModal && selectedStaff}
+ onClose={() => {
+ setShowEditModal(false);
+ setSelectedStaff(null);
+ }}
+ title="Edit Staff Member"
+ subtitle={`Update information for ${selectedStaff?.full_name || ''}`}
+ size="md"
+ icon={<Edit className="w-6 h-6" />}
+ >
+ <form onSubmit={handleEditStaff} className="space-y-4">
+ <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Full Name *</label>
+ <input
+ type="text"
+ value={editForm.full_name}
+ onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ required
+ />
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">
+ Email * {emailChecking && <span className="text-xs text-gray-500">(checking...)</span>}
+ </label>
+ <input
+ type="email"
+ value={editForm.email}
+ onChange={(e) => {
+ setEditForm({ ...editForm, email: e.target.value });
+ validateEmail(e.target.value, selectedStaff?.id);
+ }}
+ className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent ${
+ emailError ? 'border-rose-500' : 'border-gray-300'
+ }`}
+ required
+ />
+ {emailError && (
+ <p className="text-xs text-rose-600 mt-1">{emailError}</p>
+ )}
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Phone</label>
+ <input
+ type="tel"
+ value={editForm.phone}
+ onChange={(e) => {
+ setEditForm({ ...editForm, phone: e.target.value });
+ validatePhone(e.target.value);
+ }}
+ placeholder="0912-345-6789"
+ className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent ${
+ phoneError ? 'border-rose-500' : 'border-gray-300'
+ }`}
+ />
+ {phoneError && (
+ <p className="text-xs text-rose-600 mt-1">{phoneError}</p>
+ )}
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Date of Birth</label>
+ <input
+ type="date"
+ value={editForm.date_of_birth}
+ onChange={(e) => setEditForm({ ...editForm, date_of_birth: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ />
+ </div>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Gender</label>
+ <select
+ value={editForm.gender}
+ onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ >
+ <option value="">Select Gender</option>
+ <option value="Male">Male</option>
+ <option value="Female">Female</option>
+ <option value="Other">Other</option>
+ </select>
+ </div>
+ <div className="md:col-span-2">
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Position</label>
+ <input
+ type="text"
+ value={editForm.position || 'Staff'}
+ disabled
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-500 cursor-not-allowed"
+ />
+ </div>
+ <div className="md:col-span-2">
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Status *</label>
+ <select
+ value={editForm.status}
+ onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ required
+ >
+ <option value="active">Active</option>
+ <option value="inactive">Inactive</option>
+ </select>
+ </div>
+ <div className="md:col-span-2">
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">Address</label>
+ <textarea
+ value={editForm.address}
+ onChange={(e) => setEditForm({ ...editForm, address: e.target.value })}
+ rows="3"
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none"
+ placeholder="Street, Barangay, City, Province"
+ />
+ </div>
+ </div>
+ <div className="flex justify-end gap-3 pt-4">
+ <button
+ type="button"
+ onClick={() => {
+ setShowEditModal(false);
+ setSelectedStaff(null);
+ }}
+ className="px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+ >
+ Cancel
+ </button>
+ <button
+ type="submit"
+ className="px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all duration-200 flex items-center gap-2 shadow-sm hover:shadow-md"
+ >
+ Update Staff Member
+ </button>
+ </div>
+ </form>
+ </Modal>
+
+ {/* Delete Staff Modal */}
+ {selectedStaff && (
+ <ConfirmModal
+ isOpen={showDeleteModal}
+ onClose={() => {
+ setShowDeleteModal(false);
+ setSelectedStaff(null);
+ }}
+ onConfirm={handleDeleteStaff}
+ title="Delete Staff Member"
+ message="Are you sure you want to delete"
+ itemName={selectedStaff.full_name}
+ confirmText="Delete"
+ type="danger"
+ icon={<Trash2 className="w-8 h-8 text-rose-600" />}
+ />
+ )}
+
+ {/* Reset Password Modal */}
+ {selectedStaff && (
+ <Modal
+ isOpen={showResetPasswordModal}
+ onClose={() => {
+ setShowResetPasswordModal(false);
+ setSelectedStaff(null);
+ setResetPassword('');
+ }}
+ title="Reset Password"
+ subtitle={`Reset password for ${selectedStaff.full_name}`}
+ size="sm"
+ icon={<Key className="w-6 h-6" />}
+ >
+ <form onSubmit={handleResetPassword} className="space-y-4">
+ <p className="text-gray-600 text-[11px]">
+ Reset password for <span className="font-semibold">{selectedStaff.full_name}</span>
+ </p>
+ <div>
+ <label className="block text-[11px] font-medium text-gray-700 mb-2">New Password *</label>
+ <input
+ type="password"
+ value={resetPassword}
+ onChange={(e) => setResetPassword(e.target.value)}
+ className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+ minLength={8}
+ required
+ />
+ <p className="text-xs text-gray-500 mt-1">Minimum 8 characters</p>
+ </div>
+ <div className="flex gap-3 pt-4">
+ <button
+ type="button"
+ onClick={() => {
+ setShowResetPasswordModal(false);
+ setSelectedStaff(null);
+ setResetPassword('');
+ }}
+ className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+ >
+ Cancel
+ </button>
+ <button
+ type="submit"
+ className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all duration-200 flex items-center gap-2 shadow-sm hover:shadow-md"
+ >
+ Reset Password
+ </button>
+ </div>
+ </form>
+
+ </Modal>
+ )}
+ </div>
+ );
+}
+
+export default Staff;

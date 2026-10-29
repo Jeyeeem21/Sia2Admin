@@ -1,0 +1,47 @@
+# Railway Ignore File
+# Files and directories to exclude from Railway deployments
+
+# Local development
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+tests/
+phpunit.xml
+.phpunit.result.cache
+
+# Documentation
+*.md
+!README.md
+
+# Development files
+.editorconfig
+.prettierrc
+.prettierignore
+eslint.config.js
+
+# Node modules (if not needed for runtime)
+node_modules/
+
+# Storage (will be generated)
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+
+# Git
+.git/
+.gitignore
+.gitattributes

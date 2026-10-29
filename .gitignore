@@ -1,0 +1,14 @@
+# Documentation and audit text files
+/documentation/
+*.txt
+*.md
+
+# Exclude all markdown and text documentation files
+*.MD
+*.TXT
+
+# Exclude Kiro configuration
+.kiro/
+
+# Exclude VSCode settings
+.vscode/
